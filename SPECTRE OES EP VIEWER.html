@@ -1,0 +1,753 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SPECTRE OES Endpoint Viewer</title>
+<style>
+body{font-family:Arial,sans-serif;background:#111;color:#eee;margin:0}
+.wrap{padding:16px;max-width:1500px;margin:0 auto}
+.grid{display:grid;grid-template-columns:360px 1fr;gap:16px}
+.panel{background:#1b1b1b;border:1px solid #333;border-radius:12px;padding:14px}
+label{display:block;font-weight:600;margin:10px 0 4px}
+select,input,button,textarea{width:100%;box-sizing:border-box;background:#0f0f0f;color:#eee;border:1px solid #444;border-radius:8px;padding:8px}
+button{cursor:pointer}
+button:hover{background:#202020}
+.canvasWrap{background:#fff;border-radius:12px;padding:8px;overflow:hidden}
+.plotWrap{position:relative;width:100%;min-height:460px}
+svg{display:block;width:100%;height:auto;background:#fff;touch-action:none;user-select:none}
+.tooltip{position:absolute;pointer-events:none;background:rgba(17,17,17,0.96);color:#fff;border:1px solid #333;border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.35;display:none;white-space:nowrap;z-index:5;box-shadow:0 8px 20px rgba(0,0,0,0.35)}
+.sliderBar{display:flex;align-items:center;gap:10px;margin-top:10px}
+.sliderBar label{margin:0;white-space:nowrap;color:#111}
+.sliderBar input[type=range]{flex:1;margin:0}
+.sliderValue{min-width:110px;text-align:right;color:#111;font-size:12px}
+.inlineBtn{width:auto;white-space:nowrap;padding:8px 12px;background:#0f0f0f;color:#eee}
+.small{font-size:12px;color:#bbb}
+.small.darkText{color:#333}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tableWrap{overflow:auto;max-height:260px;border:1px solid #333;border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{border-bottom:1px solid #2c2c2c;padding:6px;text-align:left}
+.badge{display:inline-block;background:#263238;border:1px solid #455a64;border-radius:999px;padding:2px 8px;margin:2px 4px 2px 0;font-size:12px}
+.drop{border:2px dashed #4a4a4a;border-radius:10px;padding:14px;text-align:center;margin-top:8px}
+.drop.drag{border-color:#88c0d0;background:#172026}
+code{background:#0f0f0f;padding:2px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>SPECTRE OES Endpoint Viewer</h1>
+<p class="small">Load one or more <code>.dat</code> files.</p>
+<div class="grid">
+ <div class="panel">
+  <label>Load .dat files</label>
+  <input id="fileInput" type="file" accept=".dat,.txt" multiple>
+  <div id="dropZone" class="drop small">Or drag and drop <code>.dat</code> files here</div>
+  <div class="small" style="margin-top:6px">Suggested: select all your files at once.</div>
+
+  <label>Loaded samples</label>
+  <select id="sampleSelect" multiple size="12"></select>
+  <div class="small">Ctrl-click to select multiple wafers.</div>
+
+  <label>Wavelengths (nm)</label>
+  <input id="wlInput" value="440, 483.5, 703.5" />
+  <div class="small">Comma-separated. Nearest available wavelength is used.</div>
+
+  <label>Plot mode</label>
+  <select id="modeSelect">
+   <option value="time">Intensity vs time</option>
+   <option value="compare">Compare samples at one wavelength</option>
+   <option value="spectrum">Full spectrum at chosen time</option>
+  </select>
+
+  <div class="row">
+   <div>
+    <label>Smoothing window</label>
+    <input id="smoothInput" type="number" min="1" step="2" value="1" />
+   </div>
+   <div>
+    <label>Time (s) for spectrum mode</label>
+    <input id="timeInput" type="number" min="0" step="0.01" value="60" />
+   </div>
+  </div>
+
+  <div class="row">
+   <div>
+    <label>Normalize</label>
+    <select id="normSelect">
+     <option value="none">None</option>
+     <option value="max">Divide by trace max</option>
+     <option value="zscore">Z-score</option>
+    </select>
+   </div>
+   <div>
+    <label>Derivative</label>
+    <select id="derivSelect">
+     <option value="0">None</option>
+     <option value="1">First derivative</option>
+    </select>
+   </div>
+  </div>
+
+  <button id="plotBtn">Update plot</button>
+  <button id="scoreBtn" style="margin-top:8px">Score selected wavelengths</button>
+  <div id="meta" class="small" style="margin-top:10px"></div>
+  <div id="chips"></div>
+ </div>
+
+ <div>
+  <div class="panel">
+   <div class="canvasWrap">
+    <div id="plotWrap" class="plotWrap">
+     <svg id="chart" viewBox="0 0 1100 460" aria-label="Interactive OES plot"></svg>
+     <div id="tooltip" class="tooltip"></div>
+    </div>
+    <div class="sliderBar">
+     <label for="timeSlider">Time slider</label>
+     <input id="timeSlider" type="range" min="0" max="100" step="0.01" value="60" disabled>
+     <div id="timeSliderValue" class="sliderValue">60.00 s</div>
+     <button id="resetZoomBtn" class="inlineBtn" type="button">Reset zoom</button>
+    </div>
+    <div class="small darkText">Hover for values. Drag a box to zoom into a region. Mouse wheel zooms at the cursor. Double-click or use Reset zoom to return.</div>
+   </div>
+   <div class="small" id="caption" style="margin-top:8px"></div>
+  </div>
+  <div class="panel" style="margin-top:16px">
+   <h3 style="margin-top:0">Simple ranking helper</h3>
+   <p class="small">This is a screening aid for endpoint wavelength downselection. It rewards stronger trace change with lower early-time noise.</p>
+   <div class="tableWrap"><table id="scoreTable"><thead><tr><th>Sample</th><th>Wavelength</th><th>Score</th><th>Noise</th><th>Change</th><th>Peak dI/dt t(s)</th></tr></thead><tbody></tbody></table></div>
+  </div>
+ </div>
+</div>
+</div>
+<script>
+const RECIPE_MAP = {"1":[1,"Z-OXETC05",86,114,94,20,700,100,10,""],"2":[2,"Z-OXETC15",127,73,94,20,500,55,20,""],"3":[3,"Z-OXETC03",86,114,19,30,700,55,0,""],"4":[4,"Z-OXETC11",127,73,19,20,600,100,20,""],"5":[5,"Z-OXETC02",86,114,19,30,500,100,20,""],"6":[6,"Z-OXETC17",127,73,94,30,500,100,0,""],"7":[7,"Z-OXETC06",86,114,94,25,500,10,20,""],"8":[8,"Z-OXETC08",111,89,19,20,500,10,0,""],"9":[9,"Z-OXETC16",127,73,94,20,700,10,0,"intended 10_1"],"10":[10,"Z-OXETC14",127,73,56,30,700,10,20,"intended 10_2"],"11":[11,"Z-OXETC09",111,89,56,25,600,55,10,""],"12":[12,"Z-OXETC01",86,114,19,20,700,10,20,""],"13":[13,"Z-OXETC13",127,73,19,30,500,10,10,""],"14":[14,"Z-OXETC10",111,89,94,30,700,100,20,""],"15":[15,"Z-OXETC07",86,114,94,30,600,10,0,""],"16":[16,"Z-OXETC12",127,73,19,25,700,100,0,""],"17":[17,"Z-OXETC04",86,114,56,20,500,100,0,""],"18":[13,"Z-OXETC13",127,73,19,30,500,10,10,"rerun with extended OE time"],"19":[14,"Z-OXETC14",127,73,56,30,700,10,20,"rerun with extended OE time"]};
+const state = {
+ samples:[],
+ byWafer:new Map(),
+ plot:{
+  series:[],
+  xlabel:'',
+  ylabel:'',
+  mode:'time',
+  fullDomains:null,
+  zoomDomains:null,
+  view:null,
+  dom:null,
+  drag:null,
+  sliderValue:60,
+  showTimeMarker:false
+ }
+};
+const colors = ['#1f77b4','#d62728','#2ca02c','#9467bd','#ff7f0e','#17becf','#8c564b','#e377c2','#7f7f7f','#bcbd22','#003f5c','#7a5195'];
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function el(id){return document.getElementById(id)}
+function clamp(v,min,max){return Math.min(max,Math.max(min,v));}
+function fmt(v,digits=2){
+ if(!Number.isFinite(v)) return 'n/a';
+ const abs=Math.abs(v);
+ if(abs===0) return '0';
+ if(abs>=10000 || abs<0.001) return v.toExponential(3);
+ return v.toFixed(digits);
+}
+function escapeHtml(str){
+ return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function movingAverage(arr,w){w=Math.max(1,Math.floor(w)); if(w<=1) return arr.slice(); const h=Math.floor(w/2); return arr.map((_,i)=>{let s=0,c=0; for(let j=Math.max(0,i-h); j<=Math.min(arr.length-1,i+h); j++){ const v=arr[j]; if(Number.isFinite(v)){s+=v;c++;}} return c?s/c:null;});}
+function normalize(arr,mode){ const vals=arr.filter(Number.isFinite); if(!vals.length) return arr.slice(); if(mode==='none') return arr.slice(); if(mode==='max'){ const m=Math.max(...vals)||1; return arr.map(v=>Number.isFinite(v)?v/m:null); } if(mode==='zscore'){ const mean=vals.reduce((a,b)=>a+b,0)/vals.length; const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-mean)*(b-mean),0)/vals.length)||1; return arr.map(v=>Number.isFinite(v)?(v-mean)/sd:null); } return arr.slice(); }
+function derivative(x,y){ const out=[]; for(let i=0;i<y.length;i++){ if(i===0||i===y.length-1){ out.push(null); continue; } const y0=y[i-1], y2=y[i+1]; const dt=x[i+1]-x[i-1]; out.push(Number.isFinite(y0)&&Number.isFinite(y2)&&dt?(y2-y0)/dt:null); } return out; }
+function nearestIndex(arr,target){ let best=0, bd=Infinity; for(let i=0;i<arr.length;i++){ const d=Math.abs(arr[i]-target); if(d<bd){bd=d; best=i;}} return best; }
+function getSelectedSamples(){ return Array.from(el('sampleSelect').selectedOptions).map(o=>parseInt(o.value,10)); }
+function parseWavelengths(){ return el('wlInput').value.split(',').map(s=>parseFloat(s.trim())).filter(Number.isFinite); }
+function parseDatText(text,fileName){
+ const lines = text.split(/\r?\n/).filter(Boolean);
+ if(lines.length < 2) throw new Error('File too short: '+fileName);
+ const header = lines[0].split('\t').map(s=>s.replace(/^"|"$/g,''));
+ const wavelengths = header.slice(2).map(Number).filter(Number.isFinite);
+ const times = [];
+ const spectra = [];
+ for(let i=1;i<lines.length;i++){
+  const parts = lines[i].split('\t');
+  if(parts.length < 3) continue;
+  const t = parseFloat((parts[1]||'').replace(/^"|"$/g,''));
+  if(!Number.isFinite(t)) continue;
+  const row = new Array(wavelengths.length);
+  for(let j=0;j<wavelengths.length;j++){
+   const raw = (parts[j+2]||'').replace(/^"|"$/g,'');
+   const v = parseFloat(raw);
+   row[j] = Number.isFinite(v) ? v : null;
+  }
+  times.push(t);
+  spectra.push(row);
+ }
+ const match = /W(\d+)_/i.exec(fileName || '');
+ const wafer = match ? parseInt(match[1],10) : null;
+ const mapped = wafer && RECIPE_MAP[wafer] ? RECIPE_MAP[wafer] : null;
+ return {
+  wafer,
+  fileName,
+  wavelengths,
+  times,
+  spectra,
+  totalTime_s: times.length ? Math.max(...times) : null,
+  recipeMeta: mapped ? { mappedRecipeWafer:mapped[0], recipe:mapped[1], CHF3:mapped[2], CF4:mapped[3], Ar:mapped[4], P:mapped[5], TCP:mapped[6], Bias:mapped[7], N2:mapped[8], note:mapped[9] } : null
+ };
+}
+async function handleFiles(fileList){
+ const files = Array.from(fileList);
+ if(!files.length){ el('meta').textContent='No files detected in that selection.'; return; }
+ for(const f of files){
+  const text = await f.text();
+  const parsed = parseDatText(text, f.name);
+  if(parsed.wafer != null) state.byWafer.set(parsed.wafer, parsed);
+ }
+ state.samples = Array.from(state.byWafer.values()).sort((a,b)=>(a.wafer||999)-(b.wafer||999));
+ populateSamples();
+ renderMeta();
+ // removed auto-plot for performance; user triggers manually
+}
+function populateSamples(){
+ const sel=el('sampleSelect'); sel.innerHTML='';
+ for(const s of state.samples){
+  const meta=s.recipeMeta;
+  const opt=document.createElement('option');
+  opt.value=s.wafer;
+  opt.textContent=`W${s.wafer} | ${s.totalTime_s?.toFixed(2)} s | ${s.fileName}`;
+  sel.appendChild(opt);
+ }
+ for(let i=0;i<Math.min(3,sel.options.length);i++) sel.options[i].selected=true;
+}
+function renderMeta(){
+ const samples=getSelectedSamples(); const chips=el('chips'); chips.innerHTML='';
+ for(const w of samples){ const s=state.byWafer.get(w); if(!s) continue; const m=s.recipeMeta; const d=document.createElement('div'); d.className='badge'; d.textContent = `W${w} | total ${s.totalTime_s?.toFixed(2)} s`;
+  chips.appendChild(d);
+ }
+ el('meta').textContent = `${state.samples.length} samples loaded`;
+}
+function getLoadedForSelection(){ return getSelectedSamples().map(w=>state.byWafer.get(w)).filter(Boolean); }
+function makeSvg(tag, attrs={}){
+ const node = document.createElementNS(SVG_NS, tag);
+ Object.entries(attrs).forEach(([k,v]) => node.setAttribute(k, v));
+ return node;
+}
+function getTimeRange(loaded){
+ let min=Infinity, max=-Infinity, step=Infinity;
+ for(const d of loaded){
+  if(!d.times.length) continue;
+  min=Math.min(min,d.times[0]);
+  max=Math.max(max,d.times[d.times.length-1]);
+  for(let i=1;i<d.times.length;i++){
+   const dt=Math.abs(d.times[i]-d.times[i-1]);
+   if(Number.isFinite(dt) && dt>0) step=Math.min(step,dt);
+  }
+ }
+ if(!Number.isFinite(min) || !Number.isFinite(max)) return null;
+ if(!Number.isFinite(step) || step<=0) step=0.01;
+ return {min,max,step};
+}
+function setTimeValue(v){
+ const slider = el('timeSlider');
+ const min = parseFloat(slider.min);
+ const max = parseFloat(slider.max);
+ if(Number.isFinite(min) && Number.isFinite(max)) v = clamp(v, min, max);
+ if(!Number.isFinite(v)) v = Number.isFinite(min) ? min : 0;
+ el('timeInput').value = fmt(v,2);
+ slider.value = String(v);
+ el('timeSliderValue').textContent = `${fmt(v,2)} s`;
+ state.plot.sliderValue = v;
+ return v;
+}
+function updateTimeControls(loaded){
+ const slider = el('timeSlider');
+ const range = getTimeRange(loaded);
+ if(!range){
+  slider.disabled = true;
+  slider.min = '0';
+  slider.max = '1';
+  slider.step = '0.01';
+  setTimeValue(0);
+  return null;
+ }
+ slider.disabled = false;
+ slider.min = String(range.min);
+ slider.max = String(range.max);
+ slider.step = String(range.step);
+ const current = parseFloat(el('timeInput').value);
+ setTimeValue(Number.isFinite(current) ? current : range.min);
+ return range;
+}
+function computeDomains(series){
+ let xs=[], ys=[];
+ series.forEach(s=>{ xs = xs.concat(s.x.filter(Number.isFinite)); ys = ys.concat(s.y.filter(Number.isFinite)); });
+ if(!xs.length || !ys.length) return null;
+ let xmin=Math.min(...xs), xmax=Math.max(...xs), ymin=Math.min(...ys), ymax=Math.max(...ys);
+ const xSpanRaw = xmax-xmin;
+ const ySpanRaw = ymax-ymin;
+ const xPad = xSpanRaw ? xSpanRaw*0.02 : 1;
+ const yPad = ySpanRaw ? ySpanRaw*0.05 : 1;
+ xmin -= xPad; xmax += xPad; ymin -= yPad; ymax += yPad;
+ return {xmin,xmax,ymin,ymax};
+}
+function sanitizeDomains(domains, full){
+ if(!domains || !full) return full;
+ let xmin = clamp(domains.xmin, full.xmin, full.xmax);
+ let xmax = clamp(domains.xmax, full.xmin, full.xmax);
+ let ymin = clamp(domains.ymin, full.ymin, full.ymax);
+ let ymax = clamp(domains.ymax, full.ymin, full.ymax);
+ const minXSpan = Math.max((full.xmax-full.xmin)/10000, 1e-9);
+ const minYSpan = Math.max((full.ymax-full.ymin)/10000, 1e-9);
+ if(xmax - xmin < minXSpan){
+  const cx = (xmin + xmax) / 2;
+  xmin = cx - minXSpan/2;
+  xmax = cx + minXSpan/2;
+ }
+ if(ymax - ymin < minYSpan){
+  const cy = (ymin + ymax) / 2;
+  ymin = cy - minYSpan/2;
+  ymax = cy + minYSpan/2;
+ }
+ if(xmin < full.xmin){ xmax += full.xmin - xmin; xmin = full.xmin; }
+ if(xmax > full.xmax){ xmin -= xmax - full.xmax; xmax = full.xmax; }
+ if(ymin < full.ymin){ ymax += full.ymin - ymin; ymin = full.ymin; }
+ if(ymax > full.ymax){ ymin -= ymax - full.ymax; ymax = full.ymax; }
+ xmin = clamp(xmin, full.xmin, full.xmax);
+ xmax = clamp(xmax, full.xmin, full.xmax);
+ ymin = clamp(ymin, full.ymin, full.ymax);
+ ymax = clamp(ymax, full.ymin, full.ymax);
+ return {xmin,xmax,ymin,ymax};
+}
+function tickValues(min,max,count=5){
+ if(!Number.isFinite(min) || !Number.isFinite(max)) return [];
+ if(max === min) return [min];
+ const out=[];
+ for(let i=0;i<=count;i++) out.push(min + (i/count)*(max-min));
+ return out;
+}
+function axisDigits(span){
+ if(span >= 100) return 0;
+ if(span >= 10) return 1;
+ if(span >= 1) return 2;
+ return 3;
+}
+function buildPath(xArr, yArr, xScale, yScale){
+ let d='';
+ let started=false;
+ for(let i=0;i<xArr.length;i++){
+  const x=xArr[i], y=yArr[i];
+  if(!Number.isFinite(x) || !Number.isFinite(y)) { started=false; continue; }
+  const px = xScale(x);
+  const py = yScale(y);
+  d += `${started?'L':'M'}${px.toFixed(2)},${py.toFixed(2)}`;
+  started = true;
+ }
+ return d;
+}
+function renderEmptyPlot(message){
+ const svg = el('chart');
+ svg.innerHTML='';
+ svg.setAttribute('viewBox','0 0 1100 460');
+ svg.appendChild(makeSvg('rect',{x:0,y:0,width:1100,height:460,fill:'#fff'}));
+ const text = makeSvg('text',{x:40,y:50,fill:'#111','font-size':'18','font-family':'Arial'});
+ text.textContent = message;
+ svg.appendChild(text);
+ hideTooltip();
+}
+function plotSeries(series,xlabel,ylabel,options={}){
+ const hasData = series.some(s => s.x.some(Number.isFinite) && s.y.some(Number.isFinite));
+ state.plot.series = series;
+ state.plot.xlabel = xlabel;
+ state.plot.ylabel = ylabel;
+ state.plot.mode = options.mode || state.plot.mode;
+ state.plot.showTimeMarker = !!options.showTimeMarker;
+ state.plot.sliderValue = Number.isFinite(options.sliderValue) ? options.sliderValue : state.plot.sliderValue;
+ el('caption').textContent = options.caption || '';
+ if(!hasData){
+  state.plot.fullDomains = null;
+  state.plot.zoomDomains = null;
+  state.plot.view = null;
+  state.plot.dom = null;
+  renderEmptyPlot('No data to plot yet. Load .dat files to begin.');
+  return;
+ }
+ const fullDomains = computeDomains(series);
+ const keepZoom = !!options.keepZoom && state.plot.zoomDomains && state.plot.xlabel === xlabel && state.plot.ylabel === ylabel;
+ state.plot.fullDomains = fullDomains;
+ state.plot.zoomDomains = keepZoom ? sanitizeDomains(state.plot.zoomDomains, fullDomains) : {...fullDomains};
+ drawInteractivePlot();
+}
+function drawInteractivePlot(){
+ const svg = el('chart');
+ const tooltip = el('tooltip');
+ const width = 1100;
+ const height = 460;
+ const margin = {l:78,r:28,t:20,b:54};
+ const plotW = width - margin.l - margin.r;
+ const plotH = height - margin.t - margin.b;
+ const domains = state.plot.zoomDomains;
+ if(!domains){ renderEmptyPlot('No data to plot yet. Load .dat files to begin.'); return; }
+ svg.innerHTML='';
+ svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+ svg.appendChild(makeSvg('rect',{x:0,y:0,width,height,fill:'#fff'}));
+
+ const xScale = v => margin.l + ((v - domains.xmin) / (domains.xmax - domains.xmin)) * plotW;
+ const yScale = v => margin.t + plotH - ((v - domains.ymin) / (domains.ymax - domains.ymin)) * plotH;
+ const xInv = px => domains.xmin + ((px - margin.l) / plotW) * (domains.xmax - domains.xmin);
+ const yInv = py => domains.ymin + ((margin.t + plotH - py) / plotH) * (domains.ymax - domains.ymin);
+ state.plot.view = {width,height,margin,plotW,plotH,xScale,yScale,xInv,yInv};
+
+ const defs = makeSvg('defs');
+ const clipPath = makeSvg('clipPath',{id:'plotClip'});
+ clipPath.appendChild(makeSvg('rect',{x:margin.l,y:margin.t,width:plotW,height:plotH}));
+ defs.appendChild(clipPath);
+ svg.appendChild(defs);
+
+ const grid = makeSvg('g',{});
+ const spanX = domains.xmax - domains.xmin;
+ const spanY = domains.ymax - domains.ymin;
+ tickValues(domains.xmin, domains.xmax, 5).forEach(v => {
+  const x = xScale(v);
+  grid.appendChild(makeSvg('line',{x1:x,y1:margin.t,x2:x,y2:margin.t+plotH,stroke:'#e9e9e9','stroke-width':'1'}));
+  const label = makeSvg('text',{x,y:height-18,fill:'#111','font-size':'12','font-family':'Arial','text-anchor':'middle'});
+  label.textContent = fmt(v, axisDigits(spanX));
+  grid.appendChild(label);
+ });
+ tickValues(domains.ymin, domains.ymax, 5).forEach(v => {
+  const y = yScale(v);
+  grid.appendChild(makeSvg('line',{x1:margin.l,y1:y,x2:margin.l+plotW,y2:y,stroke:'#e9e9e9','stroke-width':'1'}));
+  const label = makeSvg('text',{x:60,y:y+4,fill:'#111','font-size':'12','font-family':'Arial','text-anchor':'end'});
+  label.textContent = fmt(v, axisDigits(spanY));
+  grid.appendChild(label);
+ });
+ svg.appendChild(grid);
+
+ const axes = makeSvg('g',{});
+ axes.appendChild(makeSvg('line',{x1:margin.l,y1:margin.t,x2:margin.l,y2:margin.t+plotH,stroke:'#222','stroke-width':'1.5'}));
+ axes.appendChild(makeSvg('line',{x1:margin.l,y1:margin.t+plotH,x2:margin.l+plotW,y2:margin.t+plotH,stroke:'#222','stroke-width':'1.5'}));
+ const xLabel = makeSvg('text',{x:margin.l + plotW/2,y:height-8,fill:'#111','font-size':'14','font-family':'Arial','text-anchor':'middle'});
+ xLabel.textContent = state.plot.xlabel;
+ axes.appendChild(xLabel);
+ const yLabel = makeSvg('text',{x:20,y:margin.t+plotH/2,fill:'#111','font-size':'14','font-family':'Arial','text-anchor':'middle',transform:`rotate(-90 20 ${margin.t+plotH/2})`});
+ yLabel.textContent = state.plot.ylabel;
+ axes.appendChild(yLabel);
+ svg.appendChild(axes);
+
+ const plotGroup = makeSvg('g',{'clip-path':'url(#plotClip)'});
+ const seriesGroup = makeSvg('g',{});
+ state.plot.series.forEach((s,idx) => {
+  const pathData = buildPath(s.x, s.y, xScale, yScale);
+  if(!pathData) return;
+  seriesGroup.appendChild(makeSvg('path',{d:pathData,fill:'none',stroke:colors[idx%colors.length],'stroke-width':'1.8','stroke-linejoin':'round','stroke-linecap':'round'}));
+ });
+ plotGroup.appendChild(seriesGroup);
+
+ let timeMarker = null;
+ if(state.plot.showTimeMarker && Number.isFinite(state.plot.sliderValue)){
+  const markerX = xScale(state.plot.sliderValue);
+  timeMarker = makeSvg('line',{x1:markerX,y1:margin.t,x2:markerX,y2:margin.t+plotH,stroke:'#555','stroke-width':'1.5','stroke-dasharray':'5 4'});
+  plotGroup.appendChild(timeMarker);
+ }
+
+ const hoverGroup = makeSvg('g',{display:'none'});
+ const hoverV = makeSvg('line',{stroke:'#666','stroke-width':'1.1','stroke-dasharray':'4 4'});
+ const hoverH = makeSvg('line',{stroke:'#666','stroke-width':'1.1','stroke-dasharray':'4 4'});
+ const hoverPoint = makeSvg('circle',{r:'4.5',fill:'#111',stroke:'#fff','stroke-width':'1.5'});
+ hoverGroup.appendChild(hoverV);
+ hoverGroup.appendChild(hoverH);
+ hoverGroup.appendChild(hoverPoint);
+ plotGroup.appendChild(hoverGroup);
+ svg.appendChild(plotGroup);
+
+ const selectionRect = makeSvg('rect',{x:0,y:0,width:0,height:0,fill:'rgba(31,119,180,0.15)',stroke:'#1f77b4','stroke-width':'1.2','stroke-dasharray':'6 4',display:'none'});
+ svg.appendChild(selectionRect);
+
+ const legend = makeSvg('g',{});
+ let legendX = margin.l + 10;
+ let legendY = margin.t + 10;
+ state.plot.series.forEach((s,idx) => {
+  legend.appendChild(makeSvg('rect',{x:legendX,y:legendY + idx*16,width:10,height:10,fill:colors[idx%colors.length]}));
+  const label = makeSvg('text',{x:legendX + 14,y:legendY + 9 + idx*16,fill:'#111','font-size':'12','font-family':'Arial'});
+  label.textContent = s.label;
+  legend.appendChild(label);
+ });
+ svg.appendChild(legend);
+
+ const overlay = makeSvg('rect',{x:margin.l,y:margin.t,width:plotW,height:plotH,fill:'rgba(0,0,0,0)',style:'cursor:crosshair'});
+ svg.appendChild(overlay);
+
+ state.plot.dom = {svg,tooltip,overlay,hoverGroup,hoverV,hoverH,hoverPoint,selectionRect,timeMarker};
+
+ overlay.addEventListener('pointerdown', onPlotPointerDown);
+ overlay.addEventListener('pointermove', onPlotPointerMove);
+ overlay.addEventListener('pointerup', onPlotPointerUp);
+ overlay.addEventListener('pointerleave', onPlotPointerLeave);
+ overlay.addEventListener('pointercancel', onPlotPointerUp);
+ overlay.addEventListener('wheel', onPlotWheel, {passive:false});
+ overlay.addEventListener('dblclick', resetZoom);
+ hideTooltip();
+}
+function getPointerSvgPoint(evt){
+ const svg = el('chart');
+ const rect = svg.getBoundingClientRect();
+ return {
+  x: (evt.clientX - rect.left) * (1100 / rect.width),
+  y: (evt.clientY - rect.top) * (460 / rect.height)
+ };
+}
+function pointInPlot(pt){
+ const view = state.plot.view;
+ return !!view && pt.x >= view.margin.l && pt.x <= view.margin.l + view.plotW && pt.y >= view.margin.t && pt.y <= view.margin.t + view.plotH;
+}
+function updateSelectionRect(start, current){
+ const rect = state.plot.dom.selectionRect;
+ const view = state.plot.view;
+ const x1 = clamp(start.x, view.margin.l, view.margin.l + view.plotW);
+ const y1 = clamp(start.y, view.margin.t, view.margin.t + view.plotH);
+ const x2 = clamp(current.x, view.margin.l, view.margin.l + view.plotW);
+ const y2 = clamp(current.y, view.margin.t, view.margin.t + view.plotH);
+ rect.setAttribute('x', Math.min(x1,x2));
+ rect.setAttribute('y', Math.min(y1,y2));
+ rect.setAttribute('width', Math.abs(x2-x1));
+ rect.setAttribute('height', Math.abs(y2-y1));
+ rect.setAttribute('display', 'block');
+}
+function hideSelectionRect(){
+ if(state.plot.dom && state.plot.dom.selectionRect) state.plot.dom.selectionRect.setAttribute('display', 'none');
+}
+function hideTooltip(){
+ const tooltip = el('tooltip');
+ tooltip.style.display='none';
+ if(state.plot.dom && state.plot.dom.hoverGroup) state.plot.dom.hoverGroup.setAttribute('display','none');
+}
+function findNearestPoint(pt){
+ const view = state.plot.view;
+ let best = null;
+ for(let sIdx=0; sIdx<state.plot.series.length; sIdx++){
+  const series = state.plot.series[sIdx];
+  if(!series.x.length) continue;
+  const xData = view.xInv(pt.x);
+  const idx = nearestIndex(series.x, xData);
+  for(const cand of [idx-1, idx, idx+1]){
+   if(cand < 0 || cand >= series.x.length) continue;
+   const xv = series.x[cand];
+   const yv = series.y[cand];
+   if(!Number.isFinite(xv) || !Number.isFinite(yv)) continue;
+   const px = view.xScale(xv);
+   const py = view.yScale(yv);
+   const dx = px - pt.x;
+   const dy = py - pt.y;
+   const dist2 = dx*dx + dy*dy;
+   if(!best || dist2 < best.dist2){
+    best = {series, sIdx, x:xv, y:yv, px, py, dist2};
+   }
+  }
+ }
+ return best;
+}
+function showHover(evt, pt){
+ const hit = findNearestPoint(pt);
+ if(!hit) { hideTooltip(); return; }
+ const dom = state.plot.dom;
+ const view = state.plot.view;
+ dom.hoverGroup.setAttribute('display','block');
+ dom.hoverV.setAttribute('x1', hit.px);
+ dom.hoverV.setAttribute('x2', hit.px);
+ dom.hoverV.setAttribute('y1', view.margin.t);
+ dom.hoverV.setAttribute('y2', view.margin.t + view.plotH);
+ dom.hoverH.setAttribute('x1', view.margin.l);
+ dom.hoverH.setAttribute('x2', view.margin.l + view.plotW);
+ dom.hoverH.setAttribute('y1', hit.py);
+ dom.hoverH.setAttribute('y2', hit.py);
+ dom.hoverPoint.setAttribute('cx', hit.px);
+ dom.hoverPoint.setAttribute('cy', hit.py);
+ dom.hoverPoint.setAttribute('fill', colors[hit.sIdx % colors.length]);
+
+ const tooltip = dom.tooltip;
+ tooltip.innerHTML = `<div style="font-weight:700;margin-bottom:4px">${escapeHtml(hit.series.label)}</div><div>${escapeHtml(state.plot.xlabel)}: ${fmt(hit.x, axisDigits(state.plot.zoomDomains.xmax - state.plot.zoomDomains.xmin))}</div><div>${escapeHtml(state.plot.ylabel)}: ${fmt(hit.y, axisDigits(state.plot.zoomDomains.ymax - state.plot.zoomDomains.ymin))}</div>`;
+ tooltip.style.display='block';
+ const wrapRect = el('plotWrap').getBoundingClientRect();
+ let left = evt.clientX - wrapRect.left + 14;
+ let top = evt.clientY - wrapRect.top + 14;
+ const maxLeft = el('plotWrap').clientWidth - tooltip.offsetWidth - 8;
+ const maxTop = el('plotWrap').clientHeight - tooltip.offsetHeight - 8;
+ left = clamp(left, 8, Math.max(8, maxLeft));
+ top = clamp(top, 8, Math.max(8, maxTop));
+ tooltip.style.left = `${left}px`;
+ tooltip.style.top = `${top}px`;
+}
+function onPlotPointerDown(evt){
+ if(evt.button !== 0) return;
+ const pt = getPointerSvgPoint(evt);
+ if(!pointInPlot(pt)) return;
+ state.plot.drag = {start:pt, current:pt, pointerId:evt.pointerId};
+ hideTooltip();
+ updateSelectionRect(pt, pt);
+ if(evt.currentTarget.setPointerCapture) evt.currentTarget.setPointerCapture(evt.pointerId);
+ evt.preventDefault();
+}
+function onPlotPointerMove(evt){
+ const pt = getPointerSvgPoint(evt);
+ if(state.plot.drag){
+  state.plot.drag.current = pt;
+  updateSelectionRect(state.plot.drag.start, pt);
+  return;
+ }
+ if(!pointInPlot(pt)){ hideTooltip(); return; }
+ showHover(evt, pt);
+}
+function onPlotPointerUp(evt){
+ if(!state.plot.drag) return;
+ const pt = getPointerSvgPoint(evt);
+ const start = state.plot.drag.start;
+ const dx = Math.abs(pt.x - start.x);
+ const dy = Math.abs(pt.y - start.y);
+ state.plot.drag = null;
+ if(evt.currentTarget.releasePointerCapture) {
+  try { evt.currentTarget.releasePointerCapture(evt.pointerId); } catch(err) {}
+ }
+ if(dx < 6 || dy < 6){
+  hideSelectionRect();
+  if(pointInPlot(pt)) showHover(evt, pt);
+  return;
+ }
+ const view = state.plot.view;
+ const x1 = clamp(start.x, view.margin.l, view.margin.l + view.plotW);
+ const x2 = clamp(pt.x, view.margin.l, view.margin.l + view.plotW);
+ const y1 = clamp(start.y, view.margin.t, view.margin.t + view.plotH);
+ const y2 = clamp(pt.y, view.margin.t, view.margin.t + view.plotH);
+ const next = {
+  xmin: Math.min(view.xInv(x1), view.xInv(x2)),
+  xmax: Math.max(view.xInv(x1), view.xInv(x2)),
+  ymin: Math.min(view.yInv(y1), view.yInv(y2)),
+  ymax: Math.max(view.yInv(y1), view.yInv(y2))
+ };
+ state.plot.zoomDomains = sanitizeDomains(next, state.plot.fullDomains);
+ hideSelectionRect();
+ drawInteractivePlot();
+}
+function onPlotPointerLeave(){
+ if(!state.plot.drag) hideTooltip();
+}
+function onPlotWheel(evt){
+ if(!state.plot.view) return;
+ evt.preventDefault();
+ const pt = getPointerSvgPoint(evt);
+ if(!pointInPlot(pt)) return;
+ const view = state.plot.view;
+ const zoom = state.plot.zoomDomains;
+ const x = view.xInv(pt.x);
+ const y = view.yInv(pt.y);
+ const factor = evt.deltaY < 0 ? 0.88 : 1.14;
+ const next = {
+  xmin: x - (x - zoom.xmin) * factor,
+  xmax: x + (zoom.xmax - x) * factor,
+  ymin: y - (y - zoom.ymin) * factor,
+  ymax: y + (zoom.ymax - y) * factor
+ };
+ state.plot.zoomDomains = sanitizeDomains(next, state.plot.fullDomains);
+ drawInteractivePlot();
+}
+function resetZoom(){
+ if(!state.plot.fullDomains) return;
+ state.plot.zoomDomains = {...state.plot.fullDomains};
+ drawInteractivePlot();
+}
+function updatePlot(keepZoom=false){
+ renderMeta();
+ const loaded = getLoadedForSelection();
+ const mode = el('modeSelect').value;
+ const smooth = parseInt(el('smoothInput').value,10) || 1;
+ const norm = el('normSelect').value;
+ const deriv = parseInt(el('derivSelect').value,10) || 0;
+ const reqWls = parseWavelengths();
+ updateTimeControls(loaded);
+ const sliderValue = parseFloat(el('timeSlider').value);
+ let series=[];
+ if(!loaded.length){
+  plotSeries([], 'x','y', {mode, sliderValue, caption:'Load .dat files and select one or more samples.'});
+  el('caption').textContent='Load .dat files and select one or more samples.';
+  return;
+ }
+ if(mode==='time'){
+  for(const d of loaded){
+   for(const req of reqWls){
+    const wi=nearestIndex(d.wavelengths, req);
+    let y=d.spectra.map(r=>r[wi]);
+    y=movingAverage(y,smooth);
+    y=normalize(y,norm);
+    if(deriv===1) y=derivative(d.times,y);
+    series.push({x:d.times, y, label:`W${d.wafer} @ ${d.wavelengths[wi].toFixed(1)} nm`});
+   }
+  }
+  plotSeries(series, 'Time (s)', deriv===1?'dI/dt':'Intensity', {
+   mode,
+   sliderValue,
+   showTimeMarker:true,
+   keepZoom,
+   caption:`Intensity vs time for selected wafers and wavelengths. Time slider sets the vertical reference cursor at ${fmt(sliderValue,2)} s.`
+  });
+ } else if(mode==='compare'){
+  const req=reqWls[0] ?? 440;
+  for(const d of loaded){
+   const wi=nearestIndex(d.wavelengths, req);
+   let y=d.spectra.map(r=>r[wi]);
+   y=movingAverage(y,smooth);
+   y=normalize(y,norm);
+   if(deriv===1) y=derivative(d.times,y);
+   series.push({x:d.times, y, label:`W${d.wafer} @ ${d.wavelengths[wi].toFixed(1)} nm`});
+  }
+  plotSeries(series, 'Time (s)', deriv===1?'dI/dt':'Intensity', {
+   mode,
+   sliderValue,
+   showTimeMarker:true,
+   keepZoom,
+   caption:`Comparison across wafers at one wavelength. Time slider sets the vertical reference cursor at ${fmt(sliderValue,2)} s.`
+  });
+ } else {
+  const tReq = parseFloat(el('timeSlider').value) || parseFloat(el('timeInput').value) || 0;
+  setTimeValue(tReq);
+  for(const d of loaded){
+   const ti=nearestIndex(d.times, tReq);
+   let y=d.spectra[ti].slice();
+   y=normalize(y,norm);
+   series.push({x:d.wavelengths, y, label:`W${d.wafer} @ t=${d.times[ti].toFixed(2)} s`});
+  }
+  plotSeries(series, 'Wavelength (nm)', 'Intensity', {
+   mode,
+   sliderValue:tReq,
+   showTimeMarker:false,
+   keepZoom,
+   caption:`Full spectra at the chosen time point. Time slider currently selects ${fmt(tReq,2)} s.`
+  });
+ }
+}
+function scoreTrace(times, y){ const vals=y.filter(Number.isFinite); if(vals.length<10) return null; const n=y.length; const first=y.slice(0,Math.max(5,Math.floor(n*0.15))).filter(Number.isFinite); const mean=first.length?first.reduce((a,b)=>a+b,0)/first.length:0; const noise=first.length?Math.sqrt(first.reduce((a,b)=>a+(b-mean)*(b-mean),0)/first.length):NaN; const change=Math.max(...vals)-Math.min(...vals); const dy=derivative(times,y); let maxAbs=-1, idx=0; for(let i=0;i<dy.length;i++){ const v=Math.abs(dy[i] ?? NaN); if(Number.isFinite(v)&&v>maxAbs){ maxAbs=v; idx=i; } } return {score: change/(1+noise), noise, change, peakTime: times[idx]}; }
+function scoreWavelengths(){ const loaded=getLoadedForSelection(); const reqWls=parseWavelengths(); const tbody=el('scoreTable').querySelector('tbody'); tbody.innerHTML=''; for(const d of loaded){ for(const req of reqWls){ const wi=nearestIndex(d.wavelengths, req); const y=d.spectra.map(r=>r[wi]); const r=scoreTrace(d.times,y); if(!r) continue; const tr=document.createElement('tr'); tr.innerHTML=`<td>W${d.wafer}</td><td>${d.wavelengths[wi].toFixed(1)}</td><td>${r.score.toFixed(2)}</td><td>${r.noise.toFixed(2)}</td><td>${r.change.toFixed(2)}</td><td>${r.peakTime.toFixed(2)}</td>`; tbody.appendChild(tr); } } }
+document.getElementById('fileInput').addEventListener('change', e => handleFiles(e.target.files));
+const dz = document.getElementById('dropZone');
+['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+dz.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+el('plotBtn').addEventListener('click', () => updatePlot(false));
+el('scoreBtn').addEventListener('click', scoreWavelengths);
+el('sampleSelect').addEventListener('change', () => {
+        renderMeta();
+        // lightweight update instead of full redraw
+        if(state.plot.series.length){
+            drawInteractivePlot();
+        }
+    });
+el('timeSlider').addEventListener('input', e => {
+ const value = setTimeValue(parseFloat(e.target.value));
+ if(el('modeSelect').value === 'spectrum') updatePlot(true);
+ else if(state.plot.series.length){ state.plot.sliderValue = value; drawInteractivePlot(); el('caption').textContent = el('modeSelect').value === 'compare' ? `Comparison across wafers at one wavelength. Time slider sets the vertical reference cursor at ${fmt(value,2)} s.` : `Intensity vs time for selected wafers and wavelengths. Time slider sets the vertical reference cursor at ${fmt(value,2)} s.`; }
+});
+el('timeInput').addEventListener('change', e => {
+ const value = setTimeValue(parseFloat(e.target.value));
+ if(el('modeSelect').value === 'spectrum') updatePlot(true);
+ else if(state.plot.series.length){ state.plot.sliderValue = value; drawInteractivePlot(); }
+});
+el('resetZoomBtn').addEventListener('click', resetZoom);
+plotSeries([], 'x', 'y', {caption:'Load .dat files and select one or more samples.'});
+</script>
+</body>
+</html>
